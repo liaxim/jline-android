@@ -16,14 +16,15 @@
 
 package nvt4j.impl;
 
-import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 
-import nvt4j.impl.telnet.DefaultOptionHandler;
-import nvt4j.impl.telnet.FunctionCommand;
+import nvt4j.impl.option.EchoOptionHandler;
+import nvt4j.impl.option.LinemodeOptionHandler;
+import nvt4j.impl.option.NawsOptionHandler;
+import nvt4j.impl.option.SuppressGoAheadOptionHandler;
 import nvt4j.impl.telnet.OptionCommand;
 import nvt4j.impl.telnet.TelnetCommand;
 import nvt4j.impl.telnet.TelnetCommandException;
@@ -31,10 +32,6 @@ import nvt4j.impl.telnet.TelnetInputStream;
 import nvt4j.impl.telnet.TelnetOption;
 import nvt4j.impl.telnet.TelnetOptionHandler;
 import nvt4j.impl.telnet.TelnetOutputStream;
-import nvt4j.impl.option.EchoOptionHandler;
-import nvt4j.impl.option.LinemodeOptionHandler;
-import nvt4j.impl.option.NawsOptionHandler;
-import nvt4j.impl.option.SuppressGoAheadOptionHandler;
 
 public class Terminal implements nvt4j.Terminal {
 
@@ -167,7 +164,11 @@ public class Terminal implements nvt4j.Terminal {
                     if (in.read() == -1)
                         break; // next option
                 } catch (TelnetCommandException e) {
-                    handleCommandException(e); // throws IOException
+                    try {
+                        handleCommandException(e);
+                    } catch (Exception e2) {
+                        break; // next option
+                    }
                     break; // next option
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -192,9 +193,15 @@ public class Terminal implements nvt4j.Terminal {
             TelnetOption option = ((OptionCommand) telnetCommand).getOption();
             TelnetOptionHandler optionHandler =
                 optionHandlers[optionCommand.getOption().getCode()];
-            boolean wasReady = optionHandler.isReady();
-            optionCommand.execute(optionHandler);
-            boolean isReady = optionHandler.isReady();
+
+            boolean wasReady = false;    
+            boolean isReady = false;
+            if (optionHandler != null) {
+                optionHandler.isReady();
+                optionCommand.execute(optionHandler);
+                isReady = optionHandler.isReady();
+            }
+
             if (!wasReady && isReady) {
                 ++readyCount;
             } else if (wasReady && !isReady) {
