@@ -6,21 +6,22 @@
  *
  * http://www.opensource.org/licenses/bsd-license.php
  */
-package jline;
+package jline.internal;
+
+// Some bits lifted from Guava's ( http://code.google.com/p/guava-libraries/ ) Preconditions.
 
 /**
- * An unsupported terminal.
+ * Preconditions.
  *
- * @author <a href="mailto:mwp1@cornell.edu">Marc Prud'hommeaux</a>
  * @author <a href="mailto:jason@planet57.com">Jason Dillon</a>
- * @since 2.0
+ * @since 2.7
  */
-public class UnsupportedTerminal
-    extends TerminalSupport
+public class Preconditions
 {
-    public UnsupportedTerminal() {
-        super(false);
-        setAnsiSupported(false);
-        setEchoEnabled(true);
+    public static <T> T checkNotNull(final T reference) {
+        if (reference == null) {
+            throw new NullPointerException();
+        }
+        return reference;
     }
 }

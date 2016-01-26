@@ -1,433 +1,235 @@
 /*
- * Copyright (c) 2002-2007, Marc Prud'hommeaux. All rights reserved.
+ * Copyright (c) 2002-2015, the original author or authors.
  *
  * This software is distributable under the BSD license. See the terms of the
  * BSD license in the documentation provided with this software.
+ *
+ * http://www.opensource.org/licenses/bsd-license.php
  */
 package jline;
 
-import java.io.*;
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+import jline.internal.InfoCmp;
+import jline.internal.Log;
+import jline.internal.TerminalLineSettings;
+
+import static jline.internal.Preconditions.checkNotNull;
 
 /**
- *  <p>
- *  Terminal that is used for unix platforms. Terminal initialization
- *  is handled by issuing the <em>stty</em> command against the
- *  <em>/dev/tty</em> file to disable character echoing and enable
- *  character input. All known unix systems (including
- *  Linux and Macintosh OS X) support the <em>stty</em>), so this
- *  implementation should work for an reasonable POSIX system.
- *        </p>
+ * Terminal that is used for unix platforms. Terminal initialization
+ * is handled by issuing the <em>stty</em> command against the
+ * <em>/dev/tty</em> file to disable character echoing and enable
+ * character input. All known unix systems (including
+ * Linux and Macintosh OS X) support the <em>stty</em>), so this
+ * implementation should work for an reasonable POSIX system.
  *
- *  @author  <a href="mailto:mwp1@cornell.edu">Marc Prud'hommeaux</a>
- *  @author  Updates <a href="mailto:dwkemp@gmail.com">Dale Kemp</a> 2005-12-03
+ * @author <a href="mailto:mwp1@cornell.edu">Marc Prud'hommeaux</a>
+ * @author <a href="mailto:dwkemp@gmail.com">Dale Kemp</a>
+ * @author <a href="mailto:jason@planet57.com">Jason Dillon</a>
+ * @author <a href="mailto:jbonofre@apache.org">Jean-Baptiste Onofr��</a>
+ * @since 2.0
  */
-public class UnixTerminal extends Terminal {
-    public static final short ARROW_START = 27;
-    public static final short ARROW_PREFIX = 91;
-    public static final short ARROW_LEFT = 68;
-    public static final short ARROW_RIGHT = 67;
-    public static final short ARROW_UP = 65;
-    public static final short ARROW_DOWN = 66;
-    public static final short O_PREFIX = 79;
-    public static final short HOME_CODE = 72;
-    public static final short END_CODE = 70;
+public class UnixTerminal
+    extends TerminalSupport
+    implements Terminal2
+{
+    private final TerminalLineSettings settings;
+    private final String type;
+    private String intr;
+    private String lnext;
+    private Set<String> bools = new HashSet<String>();
+    private Map<String, Integer> ints = new HashMap<String, Integer>();
+    private Map<String, String> strings = new HashMap<String, String>();
 
-    public static final short DEL_THIRD = 51;
-    public static final short DEL_SECOND = 126;
-
-    private boolean echoEnabled;
-    private String ttyConfig;
-    private String ttyProps;
-    private long ttyPropsLastFetched;
-    private boolean backspaceDeleteSwitched = false;
-    private static String sttyCommand =
-        System.getProperty("jline.sttyCommand", "stty");
-
+    public UnixTerminal() throws Exception {
+    	this(TerminalLineSettings.DEFAULT_TTY, null);
+    }
     
-    String encoding = System.getProperty("input.encoding", "UTF-8");
-    ReplayPrefixOneCharInputStream replayStream = new ReplayPrefixOneCharInputStream(encoding);
-    InputStreamReader replayReader;
+    public UnixTerminal(String ttyDevice) throws Exception {
+        this(ttyDevice, null);
+    }
 
-    public UnixTerminal() {
-        try {
-            replayReader = new InputStreamReader(replayStream, encoding);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+    public UnixTerminal(String ttyDevice, String type) throws Exception {
+        super(true);
+        checkNotNull(ttyDevice);
+        this.settings = TerminalLineSettings.getSettings(ttyDevice);
+        if (type == null) {
+            type = System.getenv("TERM");
         }
+        this.type = type;
+        parseInfoCmp();
     }
-   
-    protected void checkBackspace(){
-        String[] ttyConfigSplit = ttyConfig.split(":|=");
-        backspaceDeleteSwitched = ttyConfigSplit.length >= 7 && "7f".equals(ttyConfigSplit[6]);
+
+    public TerminalLineSettings getSettings() {
+        return settings;
     }
-    
+
     /**
-     *  Remove line-buffered input by invoking "stty -icanon min 1"
-     *  against the current terminal.
+     * Remove line-buffered input by invoking "stty -icanon min 1"
+     * against the current terminal.
      */
-    public void initializeTerminal() throws IOException, InterruptedException {
-        // save the initial tty configuration
-        ttyConfig = stty("-g");
+    @Override
+    public void init() throws Exception {
+        super.init();
 
-        // sanity check
-        if ((ttyConfig.length() == 0)
-                || ((ttyConfig.indexOf("=") == -1)
-                       && (ttyConfig.indexOf(":") == -1))) {
-            throw new IOException("Unrecognized stty code: " + ttyConfig);
-        }
+        setAnsiSupported(true);
 
-        checkBackspace();
+        // Set the console to be character-buffered instead of line-buffered.
+        // Make sure we're distinguishing carriage return from newline.
+        // Allow ctrl-s keypress to be used (as forward search)
+        settings.set("-icanon min 1 -icrnl -inlcr -ixon");
+        settings.undef("dsusp");
 
-        // set the console to be character-buffered instead of line-buffered
-        stty("-icanon min 1");
+        setEchoEnabled(false);
 
-        // disable character echoing
-        stty("-echo");
-        echoEnabled = false;
-
-        // at exit, restore the original tty configuration (for JDK 1.3+)
-        try {
-            Runtime.getRuntime().addShutdownHook(new Thread() {
-                    public void start() {
-                        try {
-                            restoreTerminal();
-                        } catch (Exception e) {
-                            consumeException(e);
-                        }
-                    }
-                });
-        } catch (AbstractMethodError ame) {
-            // JDK 1.3+ only method. Bummer.
-            consumeException(ame);
-        }
+        parseInfoCmp();
     }
 
-    /** 
+    /**
      * Restore the original terminal configuration, which can be used when
      * shutting down the console reader. The ConsoleReader cannot be
      * used after calling this method.
      */
-    public void restoreTerminal() throws Exception {
-        if (ttyConfig != null) {
-            stty(ttyConfig);
-            ttyConfig = null;
-        }
-        resetTerminal();
+    @Override
+    public void restore() throws Exception {
+        settings.restore();
+        super.restore();
     }
 
-    
-    
-    public int readVirtualKey(InputStream in) throws IOException {
-        int c = readCharacter(in);
+    /**
+     * Returns the value of <tt>stty columns</tt> param.
+     */
+    @Override
+    public int getWidth() {
+        int w = settings.getProperty("columns");
+        return w < 1 ? DEFAULT_WIDTH : w;
+    }
 
-        if (backspaceDeleteSwitched)
-            if (c == DELETE)
-                c = BACKSPACE;
-            else if (c == BACKSPACE)
-                c = DELETE;
+    /**
+     * Returns the value of <tt>stty rows>/tt> param.
+     */
+    @Override
+    public int getHeight() {
+        int h = settings.getProperty("rows");
+        return h < 1 ? DEFAULT_HEIGHT : h;
+    }
 
-        // in Unix terminals, arrow keys are represented by
-        // a sequence of 3 characters. E.g., the up arrow
-        // key yields 27, 91, 68
-        if (c == ARROW_START && in.available() > 0) {
-            // Escape key is also 27, so we use InputStream.available()
-            // to distinguish those. If 27 represents an arrow, there
-            // should be two more chars immediately available.
-            while (c == ARROW_START) {
-                c = readCharacter(in);
+    @Override
+    public boolean hasWeirdWrap() {
+        return getBooleanCapability("auto_right_margin")
+                && getBooleanCapability("eat_newline_glitch");
+    }
+
+    @Override
+    public synchronized void setEchoEnabled(final boolean enabled) {
+        try {
+            if (enabled) {
+                settings.set("echo");
             }
-            if (c == ARROW_PREFIX || c == O_PREFIX) {
-                c = readCharacter(in);
-                if (c == ARROW_UP) {
-                    return CTRL_P;
-                } else if (c == ARROW_DOWN) {
-                    return CTRL_N;
-                } else if (c == ARROW_LEFT) {
-                    return CTRL_B;
-                } else if (c == ARROW_RIGHT) {
-                    return CTRL_F;
-                } else if (c == HOME_CODE) {
-                    return CTRL_A;
-                } else if (c == END_CODE) {
-                    return CTRL_E;
-                } else if (c == DEL_THIRD) {
-                    c = readCharacter(in); // read 4th
-                    return DELETE;
-                }
-            } 
-        } 
-        // handle unicode characters, thanks for a patch from amyi@inf.ed.ac.uk
-        if (c > 128) {
-          // handle unicode characters longer than 2 bytes,
-          // thanks to Marc.Herbert@continuent.com
-            replayStream.setInput(c, in);
-//            replayReader = new InputStreamReader(replayStream, encoding);
-            c = replayReader.read();
-            
+            else {
+                settings.set("-echo");
+            }
+            super.setEchoEnabled(enabled);
         }
-
-        return c;
+        catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            Log.error("Failed to ", (enabled ? "enable" : "disable"), " echo", e);
+        }
     }
 
-    /**
-     *  No-op for exceptions we want to silently consume.
-     */
-    private void consumeException(Throwable e) {
-    }
-
-    public boolean isSupported() {
-        return true;
-    }
-
-    public boolean getEcho() {
-        return false;
-    }
-
-    /**
-     *  Returns the value of "stty size" width param.
-     *
-     *  <strong>Note</strong>: this method caches the value from the
-     *  first time it is called in order to increase speed, which means
-     *  that changing to size of the terminal will not be reflected
-     *  in the console.
-     */
-    public int getTerminalWidth() {
-        int val = -1;
-
+    public void disableInterruptCharacter()
+    {
         try {
-            val = getTerminalProperty("columns");
-        } catch (Exception e) {
+            intr = getSettings().getPropertyAsString("intr");
+            if ("<undef>".equals(intr)) {
+                intr = null;
+            }
+            settings.undef("intr");
         }
-
-        if (val == -1) {
-            val = 80;
+        catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            Log.error("Failed to disable interrupt character", e);
         }
-
-        return val;
     }
 
-    /**
-     *  Returns the value of "stty size" height param.
-     *
-     *  <strong>Note</strong>: this method caches the value from the
-     *  first time it is called in order to increase speed, which means
-     *  that changing to size of the terminal will not be reflected
-     *  in the console.
-     */
-    public int getTerminalHeight() {
-        int val = -1;
-
+    public void enableInterruptCharacter()
+    {
         try {
-            val = getTerminalProperty("rows");
-        } catch (Exception e) {
-        }
-
-        if (val == -1) {
-            val = 24;
-        }
-
-        return val;
-    }
-
-    private int getTerminalProperty(String prop)
-                                    throws IOException, InterruptedException {
-        // tty properties are cached so we don't have to worry too much about getting term widht/height
-        if (ttyProps == null || System.currentTimeMillis() - ttyPropsLastFetched > 1000) {
-            ttyProps = stty("-a");
-            ttyPropsLastFetched = System.currentTimeMillis();
-        }
-        // need to be able handle both output formats:
-        // speed 9600 baud; 24 rows; 140 columns;
-        // and:
-        // speed 38400 baud; rows = 49; columns = 111; ypixels = 0; xpixels = 0;
-        for (StringTokenizer tok = new StringTokenizer(ttyProps, ";\n");
-                 tok.hasMoreTokens();) {
-            String str = tok.nextToken().trim();
-
-            if (str.startsWith(prop)) {
-                int index = str.lastIndexOf(" ");
-
-                return Integer.parseInt(str.substring(index).trim());
-            } else if (str.endsWith(prop)) {
-                int index = str.indexOf(" ");
-
-                return Integer.parseInt(str.substring(0, index).trim());
+            if (intr != null) {
+                settings.set("intr", intr);
             }
         }
-
-        return -1;
+        catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            Log.error("Failed to enable interrupt character", e);
+        }
     }
 
-    /**
-     *  Execute the stty command with the specified arguments
-     *  against the current active terminal.
-     */
-    protected static String stty(final String args)
-                        throws IOException, InterruptedException {
-        return exec("stty " + args + " < /dev/tty").trim();
-    }
-
-    /**
-     *  Execute the specified command and return the output
-     *  (both stdout and stderr).
-     */
-    private static String exec(final String cmd)
-                        throws IOException, InterruptedException {
-        return exec(new String[] {
-                        "sh",
-                        "-c",
-                        cmd
-                    });
-    }
-
-    /**
-     *  Execute the specified command and return the output
-     *  (both stdout and stderr).
-     */
-    private static String exec(final String[] cmd)
-                        throws IOException, InterruptedException {
-        ByteArrayOutputStream bout = new ByteArrayOutputStream();
-
-        Process p = Runtime.getRuntime().exec(cmd);
-        int c;
-        InputStream in = null;
-        InputStream err = null;
-        OutputStream out = null;
-
+    public void disableLitteralNextCharacter()
+    {
         try {
-	        in = p.getInputStream();
-
-	        while ((c = in.read()) != -1) {
-	            bout.write(c);
-	        }
-
-	        err = p.getErrorStream();
-
-	        while ((c = err.read()) != -1) {
-	            bout.write(c);
-	        }
-	
-	        out = p.getOutputStream();
-
-	        p.waitFor();
-	    } finally {
-		    try {in.close();} catch (Exception e) {}
-		    try {err.close();} catch (Exception e) {}
-		    try {out.close();} catch (Exception e) {}
-	    }
-
-        String result = new String(bout.toByteArray());
-
-        return result;
-    }
-
-    /**
-     *  The command to use to set the terminal options. Defaults
-     *  to "stty", or the value of the system property "jline.sttyCommand".
-     */
-    public static void setSttyCommand(String cmd) {
-        sttyCommand = cmd;
-    }
-
-    /**
-     *  The command to use to set the terminal options. Defaults
-     *  to "stty", or the value of the system property "jline.sttyCommand".
-     */
-    public static String getSttyCommand() {
-        return sttyCommand;
-    }
-
-    public synchronized boolean isEchoEnabled() {
-        return echoEnabled;
-    }
-
-
-    public synchronized void enableEcho() {
-    	try {
-			stty("echo");
-            echoEnabled = true;
-		} catch (Exception e) {
-			consumeException(e);
-		}
-    }
-
-    public synchronized void disableEcho() {
-    	try {
-			stty("-echo");
-            echoEnabled = false;
-		} catch (Exception e) {
-			consumeException(e);
-		}
-    }
-
-    /**
-     * This is awkward and inefficient, but probably the minimal way to add
-     * UTF-8 support to JLine
-     *
-     * @author <a href="mailto:Marc.Herbert@continuent.com">Marc Herbert</a>
-     */
-    static class ReplayPrefixOneCharInputStream extends InputStream {
-        byte firstByte;
-        int byteLength;
-        InputStream wrappedStream;
-        int byteRead;
-
-        final String encoding;
-        
-        public ReplayPrefixOneCharInputStream(String encoding) {
-            this.encoding = encoding;
+            lnext = getSettings().getPropertyAsString("lnext");
+            if ("<undef>".equals(lnext)) {
+                lnext = null;
+            }
+            settings.undef("lnext");
         }
-        
-        public void setInput(int recorded, InputStream wrapped) throws IOException {
-            this.byteRead = 0;
-            this.firstByte = (byte) recorded;
-            this.wrappedStream = wrapped;
-
-            byteLength = 1;
-            if (encoding.equalsIgnoreCase("UTF-8"))
-                setInputUTF8(recorded, wrapped);
-            else if (encoding.equalsIgnoreCase("UTF-16"))
-                byteLength = 2;
-            else if (encoding.equalsIgnoreCase("UTF-32"))
-                byteLength = 4;
+        catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            Log.error("Failed to disable litteral next character", e);
         }
-            
-            
-        public void setInputUTF8(int recorded, InputStream wrapped) throws IOException {
-            // 110yyyyy 10zzzzzz
-            if ((firstByte & (byte) 0xE0) == (byte) 0xC0)
-                this.byteLength = 2;
-            // 1110xxxx 10yyyyyy 10zzzzzz
-            else if ((firstByte & (byte) 0xF0) == (byte) 0xE0)
-                this.byteLength = 3;
-            // 11110www 10xxxxxx 10yyyyyy 10zzzzzz
-            else if ((firstByte & (byte) 0xF8) == (byte) 0xF0)
-                this.byteLength = 4;
-            else
-                throw new IOException("invalid UTF-8 first byte: " + firstByte);
+    }
+
+    public void enableLitteralNextCharacter()
+    {
+        try {
+            if (lnext != null) {
+                settings.set("lnext", lnext);
+            }
         }
-
-        public int read() throws IOException {
-            if (available() == 0)
-                return -1;
-
-            byteRead++;
-
-            if (byteRead == 1)
-                return firstByte;
-
-            return wrappedStream.read();
+        catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            Log.error("Failed to enable litteral next character", e);
         }
+    }
 
-        /**
-        * InputStreamReader is greedy and will try to read bytes in advance. We
-        * do NOT want this to happen since we use a temporary/"losing bytes"
-        * InputStreamReader above, that's why we hide the real
-        * wrappedStream.available() here.
-        */
-        public int available() {
-            return byteLength - byteRead;
+    public boolean getBooleanCapability(String capability) {
+        return bools.contains(capability);
+    }
+
+    public Integer getNumericCapability(String capability) {
+        return ints.get(capability);
+    }
+
+    public String getStringCapability(String capability) {
+        return strings.get(capability);
+    }
+
+    private void parseInfoCmp() {
+        String capabilities = null;
+        if (type != null) {
+            try {
+                capabilities = InfoCmp.getInfoCmp(type);
+            } catch (Exception e) {
+            }
         }
+        if (capabilities == null) {
+            capabilities = InfoCmp.getAnsiCaps();
+        }
+        InfoCmp.parseInfoCmp(capabilities, bools, ints, strings);
     }
 }

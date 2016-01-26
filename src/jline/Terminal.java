@@ -1,184 +1,65 @@
 /*
- * Copyright (c) 2002-2007, Marc Prud'hommeaux. All rights reserved.
+ * Copyright (c) 2002-2015, the original author or authors.
  *
  * This software is distributable under the BSD license. See the terms of the
  * BSD license in the documentation provided with this software.
+ *
+ * http://www.opensource.org/licenses/bsd-license.php
  */
 package jline;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 /**
- *  Representation of the input terminal for a platform. Handles
- *  any initialization that the platform may need to perform
- *  in order to allow the {@link ConsoleReader} to correctly handle
- *  input.
+ * Representation of the input terminal for a platform.
  *
- *  @author  <a href="mailto:mwp1@cornell.edu">Marc Prud'hommeaux</a>
+ * @author <a href="mailto:mwp1@cornell.edu">Marc Prud'hommeaux</a>
+ * @author <a href="mailto:jason@planet57.com">Jason Dillon</a>
+ * @since 2.0
  */
-public abstract class Terminal implements ConsoleOperations {
-    private static Terminal term;
+public interface Terminal
+{
+    void init() throws Exception;
+
+    void restore() throws Exception;
+
+    void reset() throws Exception;
+
+    boolean isSupported();
+
+    int getWidth();
+
+    int getHeight();
+
+    boolean isAnsiSupported();
 
     /**
-     *  @see #setupTerminal
+     * When ANSI is not natively handled, the output will have to be wrapped.
      */
-    public static Terminal getTerminal() {
-        return setupTerminal();
-    }
-
-    /** 
-     *  Reset the current terminal to null. 
-     */
-    public static void resetTerminal() {
-        term = null;
-    }
+    OutputStream wrapOutIfNeeded(OutputStream out);
 
     /**
-     *  <p>Configure and return the {@link Terminal} instance for the
-     *  current platform. This will initialize any system settings
-     *  that are required for the console to be able to handle
-     *  input correctly, such as setting tabtop, buffered input, and
-     *  character echo.</p>
+     * When using native support, return the InputStream to use for reading characters
+     * else return the input stream passed as a parameter.
      *
-     *  <p>This class will use the Terminal implementation specified in the
-     *  <em>jline.terminal</em> system property, or, if it is unset, by
-     *  detecting the operating system from the <em>os.name</em>
-     *  system property and instantiating either the
-     *  {@link WindowsTerminalTest} or {@link UnixTerminal}.
-     *
-     *  @see #initializeTerminal
+     * @since 2.6
      */
-    public static synchronized Terminal setupTerminal() {
-        if (term != null) {
-            return term;
-        }
-
-        final Terminal t;
-
-        String os = System.getProperty("os.name").toLowerCase();
-        String termProp = System.getProperty("jline.terminal");
-
-        if ((termProp != null) && (termProp.length() > 0)) {
-            try {
-                t = (Terminal) Class.forName(termProp).newInstance();
-            } catch (Exception e) {
-                throw (IllegalArgumentException) new IllegalArgumentException(e
-                    .toString()).fillInStackTrace();
-            }
-        } else if (os.indexOf("windows") != -1) {
-            t = new WindowsTerminal();
-        } else {
-            t = new UnixTerminal();
-        }
-
-        try {
-            t.initializeTerminal();
-        } catch (Exception e) {
-            e.printStackTrace();
-
-            return term = new UnsupportedTerminal();
-        }
-
-        return term = t;
-    }
+    InputStream wrapInIfNeeded(InputStream in) throws IOException;
 
     /**
-     *  Returns true if the current console supports ANSI
-     *  codes.
+     * For terminals that don't wrap when character is written in last column,
+     * only when the next character is written.
+     * These are the ones that have 'am' and 'xn' termcap attributes (xterm and
+     * rxvt flavors falls under that category)
      */
-    public boolean isANSISupported() {
-        return true;
-    }
+    boolean hasWeirdWrap();
 
-    /**
-     *  Read a single character from the input stream. This might
-     *  enable a terminal implementation to better handle nuances of
-     *  the console.
-     */
-    public int readCharacter(final InputStream in) throws IOException {
-        return in.read();
-    }
+    boolean isEchoEnabled();
 
-    /**
-     *  Reads a virtual key from the console. Typically, this will
-     *  just be the raw character that was entered, but in some cases,
-     *  multiple input keys will need to be translated into a single
-     *  virtual key.
-     *
-     *  @param  in  the InputStream to read from
-     *  @return  the virtual key (e.g., {@link ConsoleOperations#VK_UP})
-     */
-    public int readVirtualKey(InputStream in) throws IOException {
-        return readCharacter(in);
-    }
+    void setEchoEnabled(boolean enabled);
 
-    /**
-     *  Initialize any system settings
-     *  that are required for the console to be able to handle
-     *  input correctly, such as setting tabtop, buffered input, and
-     *  character echo.
-     */
-    public abstract void initializeTerminal() throws Exception;
+    String getOutputEncoding();
 
-    /**
-     *  Returns the current width of the terminal (in characters)
-     */
-    public abstract int getTerminalWidth();
-
-    /**
-     *  Returns the current height of the terminal (in lines)
-     */
-    public abstract int getTerminalHeight();
-
-    /**
-     *  Returns true if this terminal is capable of initializing the
-     *  terminal to use jline.
-     */
-    public abstract boolean isSupported();
-
-    /**
-     *  Returns true if the terminal will echo all characters type.
-     */
-    public abstract boolean getEcho();
-
-    /**
-     *  Invokes before the console reads a line with the prompt and mask.
-     */
-    public void beforeReadLine(ConsoleReader reader, String prompt,
-                               Character mask) {
-    }
-
-    /**
-     *  Invokes after the console reads a line with the prompt and mask.
-     */
-    public void afterReadLine(ConsoleReader reader, String prompt,
-                              Character mask) {
-    }
-
-    /**
-     *  Returns false if character echoing is disabled.
-     */
-    public abstract boolean isEchoEnabled();
-
-
-    /**
-     *  Enable character echoing. This can be used to re-enable character
-     *  if the ConsoleReader is no longer being used.
-     */
-    public abstract void enableEcho();
-
-
-    /**
-     *  Disable character echoing. This can be used to manually re-enable
-     *  character if the ConsoleReader has been disabled.
-     */
-    public abstract void disableEcho();
-
-    public InputStream getDefaultBindings() {
-        // Mac bindings are slightly different from Unix/Linux.
-        // For instance, the Delete key behavior is different between them.
-        return Terminal.class.getResourceAsStream(
-                System.getProperty("os.name").toLowerCase().startsWith("mac") ?
-                    "keybindings-mac.properties" : "keybindings.properties");
-    }
 }

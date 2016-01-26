@@ -6,21 +6,23 @@
  *
  * http://www.opensource.org/licenses/bsd-license.php
  */
-package jline;
+package jline.console.completer;
+
+import java.util.List;
 
 /**
- * An unsupported terminal.
+ * Null completer.
  *
  * @author <a href="mailto:mwp1@cornell.edu">Marc Prud'hommeaux</a>
  * @author <a href="mailto:jason@planet57.com">Jason Dillon</a>
- * @since 2.0
+ * @since 2.3
  */
-public class UnsupportedTerminal
-    extends TerminalSupport
+public final class NullCompleter
+    implements Completer
 {
-    public UnsupportedTerminal() {
-        super(false);
-        setAnsiSupported(false);
-        setEchoEnabled(true);
+    public static final NullCompleter INSTANCE = new NullCompleter();
+
+    public int complete(final String buffer, final int cursor, final List<CharSequence> candidates) {
+        return -1;
     }
 }
