@@ -8,13 +8,6 @@
  */
 package jline.console;
 
-import java.awt.*;
-import java.awt.datatransfer.Clipboard;
-import java.awt.datatransfer.DataFlavor;
-import java.awt.datatransfer.Transferable;
-import java.awt.datatransfer.UnsupportedFlavorException;
-import java.awt.event.ActionListener;
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
@@ -38,6 +31,7 @@ import java.util.ResourceBundle;
 import java.util.Stack;
 
 import jline.DefaultTerminal2;
+import jline.Strings;
 import jline.Terminal;
 import jline.Terminal2;
 import jline.TerminalFactory;
@@ -47,7 +41,6 @@ import jline.console.completer.Completer;
 import jline.console.completer.CompletionHandler;
 import jline.console.history.History;
 import jline.console.history.MemoryHistory;
-import jline.internal.Ansi;
 import jline.internal.Configuration;
 import jline.internal.Curses;
 import jline.internal.InputStreamReader;
@@ -56,7 +49,6 @@ import jline.internal.NonBlockingInputStream;
 import jline.internal.Nullable;
 import jline.internal.TerminalLineSettings;
 import jline.internal.Urls;
-
 import static jline.internal.Preconditions.checkNotNull;
 
 /**
@@ -91,9 +83,6 @@ public class ConsoleReader
     public static final char NULL_MASK = 0;
 
     public static final int TAB_WIDTH = 8;
-
-    private static final ResourceBundle
-        resources = ResourceBundle.getBundle(CandidateListCompletionHandler.class.getName());
 
     private static final int ESCAPE = 27;
     private static final int READ_EXPIRED = -2;
@@ -478,7 +467,7 @@ public class ConsoleReader
 
     public void setPrompt(final String prompt) {
         this.prompt = prompt;
-        this.promptLen = ((prompt == null) ? 0 : wcwidth(Ansi.stripAnsi(lastLine(prompt)), 0));
+        this.promptLen = ((prompt == null) ? 0 : wcwidth(lastLine(prompt), 0));
     }
 
     public String getPrompt() {
@@ -2475,13 +2464,6 @@ public class ConsoleReader
                     continue;
                 }
 
-                // Handle custom callbacks
-                if (o instanceof ActionListener) {
-                    ((ActionListener) o).actionPerformed(null);
-                    opBuffer.setLength(0);
-                    continue;
-                }
-
                 CursorBuffer oldBuf = new CursorBuffer();
                 oldBuf.buffer.append(buf.buffer);
                 oldBuf.cursor = buf.cursor;
@@ -3619,90 +3601,7 @@ public class ConsoleReader
      * @return true if clipboard contents pasted
      */
     public boolean paste() throws IOException {
-        Clipboard clipboard;
-        try { // May throw ugly exception on system without X
-            clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-        }
-        catch (Exception e) {
-            return false;
-        }
-
-        if (clipboard == null) {
-            return false;
-        }
-
-        Transferable transferable = clipboard.getContents(null);
-
-        if (transferable == null) {
-            return false;
-        }
-
-        try {
-            @SuppressWarnings("deprecation")
-            Object content = transferable.getTransferData(DataFlavor.plainTextFlavor);
-
-            // This fix was suggested in bug #1060649 at
-            // http://sourceforge.net/tracker/index.php?func=detail&aid=1060649&group_id=64033&atid=506056
-            // to get around the deprecated DataFlavor.plainTextFlavor, but it
-            // raises a UnsupportedFlavorException on Mac OS X
-
-            if (content == null) {
-                try {
-                    content = new DataFlavor().getReaderForText(transferable);
-                }
-                catch (Exception e) {
-                    // ignore
-                }
-            }
-
-            if (content == null) {
-                return false;
-            }
-
-            String value;
-
-            if (content instanceof Reader) {
-                // TODO: we might want instead connect to the input stream
-                // so we can interpret individual lines
-                value = "";
-                String line;
-
-                BufferedReader read = new BufferedReader((Reader) content);
-                while ((line = read.readLine()) != null) {
-                    if (value.length() > 0) {
-                        value += "\n";
-                    }
-
-                    value += line;
-                }
-            }
-            else {
-                value = content.toString();
-            }
-
-            if (value == null) {
-                return true;
-            }
-
-            putString(value);
-
-            return true;
-        }
-        catch (UnsupportedFlavorException e) {
-            Log.error("Paste failed: ", e);
-
-            return false;
-        }
-    }
-
-    /**
-     * Adding a triggered Action allows to give another curse of action if a character passed the pre-processing.
-     * <p/>
-     * Say you want to close the application if the user enter q.
-     * addTriggerAction('q', new ActionListener(){ System.exit(0); }); would do the trick.
-     */
-    public void addTriggeredAction(final char c, final ActionListener listener) {
-        getKeys().bind(Character.toString(c), listener);
+        return false;
     }
 
     //
@@ -3723,7 +3622,7 @@ public class ConsoleReader
         int maxWidth = 0;
         for (CharSequence item : items) {
             // we use 0 here, as we don't really support tabulations inside candidates
-            int len = wcwidth(Ansi.stripAnsi(item.toString()), 0);
+            int len = wcwidth(item.toString(), 0);
             maxWidth = Math.max(maxWidth, len);
         }
         maxWidth = maxWidth + 3;
@@ -3747,7 +3646,7 @@ public class ConsoleReader
 
                 if (--showLines == 0) {
                     // Overflow
-                    print(resources.getString("DISPLAY_MORE"));
+                    print(Strings.display_more);
                     flush();
                     int c = readCharacter();
                     if (c == '\r' || c == '\n') {
@@ -3759,7 +3658,7 @@ public class ConsoleReader
                         showLines = height - 1;
                     }
 
-                    back(resources.getString("DISPLAY_MORE").length());
+                    back(Strings.display_more.length());
                     if (c == 'q') {
                         // cancel
                         break;
@@ -3769,7 +3668,7 @@ public class ConsoleReader
 
             // NOTE: toString() is important here due to AnsiString being retarded
             buff.append(item.toString());
-            int strippedItemLength = wcwidth(Ansi.stripAnsi(item.toString()), 0);
+            int strippedItemLength = wcwidth(item.toString(), 0);
             for (int i = 0; i < (maxWidth - strippedItemLength); i++) {
                 buff.append(' ');
             }

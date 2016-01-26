@@ -8,16 +8,18 @@
  */
 package jline.console.completer;
 
+import jline.Strings;
 import jline.console.ConsoleReader;
 import jline.console.CursorBuffer;
-import jline.internal.Ansi;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.ResourceBundle;
 import java.util.Set;
 
@@ -62,7 +64,7 @@ public class CandidateListCompletionHandler
 
         // if there is only one completion, then fill in the buffer
         if (candidates.size() == 1) {
-            String value = Ansi.stripAnsi(candidates.get(0).toString());
+            String value = candidates.get(0).toString();
 
             if (buf.cursor == buf.buffer.length()
                     && printSpaceAfterFullCompletion
@@ -178,9 +180,6 @@ public class CandidateListCompletionHandler
         String[] strings = new String[candidates.size() - 1];
         for (int i = 0; i < candidates.size(); i++) {
             String str = candidates.get(i).toString();
-            if (stripAnsi) {
-                str = Ansi.stripAnsi(str);
-            }
             if (first == null) {
                 first = str;
             } else {
@@ -221,16 +220,16 @@ public class CandidateListCompletionHandler
         DISPLAY_CANDIDATES_YES,
         DISPLAY_CANDIDATES_NO,;
 
-        private static final
-        ResourceBundle
-            bundle =
-            ResourceBundle.getBundle(CandidateListCompletionHandler.class.getName(), Locale.getDefault());
+        static Map<Messages, String> sMap;
+        static {
+            sMap = new HashMap<Messages, String>();
+            sMap.put(DISPLAY_CANDIDATES, Strings.display_candidates);
+            sMap.put(DISPLAY_CANDIDATES_YES, Strings.candidates_yes);
+            sMap.put(DISPLAY_CANDIDATES_NO, Strings.candidates_no);
+        }
 
         public String format(final Object... args) {
-            if (bundle == null)
-                return "";
-            else
-                return String.format(bundle.getString(name()), args);
+            return String.format(sMap.get(this), args);
         }
     }
 }
