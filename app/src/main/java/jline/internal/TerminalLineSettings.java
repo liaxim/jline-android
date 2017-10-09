@@ -305,10 +305,14 @@ public final class TerminalLineSettings
             }
             sb.append(" < ");
             sb.append(ttyDevice);
-            p = new ProcessBuilder(shCommand, "-c", sb.toString()).start();
+            try {
+                p = new ProcessBuilder(shCommand, "-c", sb.toString()).start();
+            } catch (final Exception exc) {
+                exc.printStackTrace();
+            }
         }
 
-        String result = waitAndCapture(p);
+        String result = null != p ? waitAndCapture(p) : "";
 
         Log.trace("Result: ", result);
 
